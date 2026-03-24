@@ -1,0 +1,212 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage[margin=1in]{geometry}
+\usepackage{natbib}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+% Title
+\title{Literature Review: Handling Truncation vs.\ Termination in Policy Gradient Methods}
+\author{Research Notes}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This literature review examines the distinction between episode truncation and termination in reinforcement learning, with a focus on how this affects value bootstrapping in policy gradient methods such as Proximal Policy Optimization (PPO). We survey the foundational work on temporal difference learning and generalized advantage estimation, the key paper by \citet{pardo2018time} that introduced partial-episode bootstrapping, and recent developments in RL libraries that have adopted proper truncation handling. Our review reveals that while the problem has been identified and solutions proposed since 2018, many popular implementations still conflate truncation with termination, potentially leading to biased value estimates and suboptimal learning.
+\end{abstract}
+
+\section{Introduction}
+
+Reinforcement learning (RL) algorithms learn to maximize cumulative reward through interaction with an environment. A fundamental concept in RL is the \emph{episode}---a sequence of states, actions, and rewards that ends when the agent reaches a terminal state. However, practical implementations often impose artificial time limits on episodes, creating a distinction between two types of episode endings:
+
+\begin{itemize}
+    \item \textbf{Termination}: The episode ends because the agent reached a true terminal state (e.g., task completion, failure, or death).
+    \item \textbf{Truncation}: The episode ends due to an artificial constraint (e.g., maximum timesteps reached), but the underlying Markov Decision Process (MDP) has not actually terminated.
+\end{itemize}
+
+This distinction is crucial for correctly computing value estimates in bootstrapping methods. As we will show, treating truncation as termination introduces bias in value function learning. This review surveys the relevant literature and examines existing solutions.
+
+\section{Foundational Work}
+
+\subsection{Temporal Difference Learning}
+
+The foundation of modern value-based RL lies in temporal difference (TD) learning, introduced by \citet{sutton1988learning}. TD methods learn value functions by bootstrapping---using current estimates of future values to update earlier estimates. The one-step TD error (also called the TD residual) is:
+\begin{equation}
+    \delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)
+\end{equation}
+where $\gamma$ is the discount factor. At terminal states, the bootstrap term $V(s_{t+1})$ is typically set to zero, as there are no future rewards. This is the source of the truncation problem: if we set the bootstrap to zero at \emph{truncated} states (which are not truly terminal), we introduce bias.
+
+\subsection{Generalized Advantage Estimation}
+
+\citet{schulman2015high} introduced Generalized Advantage Estimation (GAE), which provides a family of advantage estimators parameterized by $\lambda \in [0,1]$:
+\begin{equation}
+    \hat{A}_t^{\text{GAE}(\gamma, \lambda)} = \sum_{l=0}^{\infty} (\gamma\lambda)^l \delta_{t+l}
+\end{equation}
+
+GAE allows practitioners to trade off bias and variance in advantage estimates. The parameter $\lambda$ interpolates between the one-step TD advantage ($\lambda = 0$, low variance, high bias) and Monte Carlo advantage ($\lambda = 1$, high variance, low bias). GAE has become the standard advantage estimator in policy gradient methods.
+
+Importantly, the GAE formulation assumes that $\delta_t$ is computed correctly at episode boundaries. If truncation is incorrectly treated as termination, all subsequent advantage estimates in the trajectory will be biased.
+
+\subsection{Proximal Policy Optimization}
+
+Proximal Policy Optimization (PPO), introduced by \citet{schulman2017proximal}, has become one of the most widely used deep RL algorithms due to its simplicity, stability, and strong empirical performance. PPO uses a clipped surrogate objective to constrain policy updates:
+\begin{equation}
+    L^{\text{CLIP}}(\theta) = \mathbb{E}_t\left[\min\left(r_t(\theta)\hat{A}_t, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t\right)\right]
+\end{equation}
+where $r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{\text{old}}}(a_t|s_t)}$ is the probability ratio.
+
+PPO typically uses GAE for computing $\hat{A}_t$, inheriting the same truncation problem. The original PPO paper does not explicitly address the distinction between truncation and termination.
+
+\section{The Time Limits Problem}
+
+\subsection{Identification of the Problem}
+
+The problem of time limits in RL was formally identified and addressed by \citet{pardo2018time} in their ICML 2018 paper ``Time Limits in Reinforcement Learning.'' This seminal work made several key contributions:
+
+\begin{enumerate}
+    \item \textbf{Problem Formalization}: They formalized the distinction between termination due to the environment's dynamics (true termination) and termination due to time limits (truncation).
+    
+    \item \textbf{Partial-Episode Bootstrapping (PEB)}: They proposed a simple solution: when an episode is truncated (not truly terminated), bootstrap with $V(s_T)$ instead of zero:
+    \begin{equation}
+        \delta_{T-1} = r_{T-1} + \gamma V(s_T) - V(s_{T-1}) \quad \text{(for truncation)}
+    \end{equation}
+    versus:
+    \begin{equation}
+        \delta_{T-1} = r_{T-1} + \gamma \cdot 0 - V(s_{T-1}) = r_{T-1} - V(s_{T-1}) \quad \text{(for termination)}
+    \end{equation}
+    
+    \item \textbf{Empirical Validation}: They demonstrated that PEB improves performance on MuJoCo continuous control tasks, particularly when time limits are frequently reached.
+\end{enumerate}
+
+The paper has been cited over 248 times and has influenced the design of modern RL libraries and environment APIs.
+
+\subsection{Theoretical Analysis}
+
+The bias introduced by incorrect truncation handling can be understood as follows. Consider an episode truncated at time $T$. If we incorrectly use $V(s_T) = 0$ for bootstrapping, the return estimate becomes:
+\begin{equation}
+    \hat{G}_t = \sum_{k=t}^{T-1} \gamma^{k-t} r_k
+\end{equation}
+
+However, the true return (if the episode had continued) would be:
+\begin{equation}
+    G_t = \sum_{k=t}^{T-1} \gamma^{k-t} r_k + \gamma^{T-t} G_T
+\end{equation}
+
+The bias is thus $\gamma^{T-t} G_T$, which can be significant when:
+\begin{itemize}
+    \item The discount factor $\gamma$ is close to 1 (long-horizon problems)
+    \item The expected future return $G_T$ from the truncated state is large
+    \item Truncation happens frequently (e.g., in environments with short time limits)
+\end{itemize}
+
+\section{Modern Environment APIs}
+
+\subsection{From OpenAI Gym to Gymnasium}
+
+The original OpenAI Gym library \citep{brockman2016openai} used a single \texttt{done} flag to indicate episode termination, conflating truncation with termination. This design choice was propagated to countless RL implementations.
+
+The Gymnasium library \citep{towers2024gymnasium}, which succeeded OpenAI Gym, introduced a crucial API change: the \texttt{step()} function now returns separate \texttt{terminated} and \texttt{truncated} boolean flags:
+
+\begin{verbatim}
+observation, reward, terminated, truncated, info = env.step(action)
+\end{verbatim}
+
+Additionally, Gymnasium provides \texttt{final\_observation} in the info dictionary when an episode ends due to truncation, allowing algorithms to compute $V(s_T)$ for proper bootstrapping.
+
+As noted in the Gymnasium paper: ``While the difference between termination and truncation may seem minor, [it has] important algorithmic implications.'' This API change enables correct implementation of partial-episode bootstrapping.
+
+\section{Implementation in RL Libraries}
+
+\subsection{Libraries with Correct Handling}
+
+Several modern RL libraries have adopted correct truncation handling:
+
+\begin{itemize}
+    \item \textbf{Tianshou} \citep{weng2022tianshou}: This highly modular library implements proper truncation handling and cites the \citet{pardo2018time} paper in its documentation.
+    
+    \item \textbf{Stable-Baselines3}: Recent versions have added support for handling truncation correctly, though it requires explicit configuration.
+\end{itemize}
+
+\subsection{Libraries with Standard (Incorrect) Handling}
+
+Many popular implementations still use the traditional approach:
+
+\begin{itemize}
+    \item \textbf{CleanRL} \citep{huang2022cleanrl}: The standard PPO implementation combines \texttt{terminated} and \texttt{truncated} into a single \texttt{done} flag, using it uniformly for bootstrapping decisions.
+    
+    \item Many tutorial implementations and educational codebases follow the original PPO paper without the PEB correction.
+\end{itemize}
+
+\section{Empirical Studies}
+
+\subsection{Large-Scale Studies}
+
+\citet{andrychowicz2020matters,andrychowicz2021matters} conducted extensive empirical studies on what implementation details matter for on-policy deep RL. While they examined many factors (network architecture, normalization, optimizer settings, etc.), the truncation handling was not a primary focus of their analysis. This represents a gap in the empirical literature.
+
+\subsection{Environment-Specific Considerations}
+
+The impact of truncation handling varies by environment:
+
+\begin{itemize}
+    \item \textbf{Atari games}: Most Atari games have natural termination conditions (losing all lives), making truncation less frequent. However, some implementations add time limits.
+    
+    \item \textbf{Classic control}: Environments like CartPole-v1 (500 step limit), Acrobot-v1 (500 step limit), and LunarLander-v2 (1000 step limit) frequently truncate successful episodes.
+    
+    \item \textbf{MuJoCo locomotion}: These continuous control tasks typically use 1000-step limits, and successful agents often run until truncation.
+\end{itemize}
+
+\section{Related Techniques}
+
+\subsection{Partial Advantage Estimation}
+
+\citet{jin2024partial} introduced Partial Advantage Estimator for PPO, which addresses related issues in advantage computation. Their work focuses on handling partial trajectories within rollout buffers but is conceptually related to the truncation problem.
+
+\subsection{Bootstrap-Based Methods}
+
+\citet{viquerat2023parallel} explored end-of-episode bootstrapping in the context of parallel environments for continuous control. Their work builds on the PEB concept for improved sample efficiency.
+
+\section{Synthesis and Research Gap}
+
+Our literature review reveals the following:
+
+\begin{enumerate}
+    \item \textbf{The problem is well-understood}: \citet{pardo2018time} clearly identified and solved the truncation problem in 2018.
+    
+    \item \textbf{The API now supports correct handling}: Gymnasium's separated \texttt{terminated}/\texttt{truncated} flags enable proper implementation.
+    
+    \item \textbf{Many implementations remain incorrect}: Despite the available solution, many popular codebases still conflate truncation with termination.
+    
+    \item \textbf{Empirical comparison is limited}: While \citet{pardo2018time} showed improvements on MuJoCo tasks, comprehensive comparisons across environment types and with modern PPO implementations are lacking.
+\end{enumerate}
+
+\subsection{Research Questions}
+
+Based on this review, we identify the following research questions for our experimental study:
+
+\begin{enumerate}
+    \item Does correct truncation handling improve PPO performance on standard Gymnasium environments?
+    \item In which environments is the difference most pronounced?
+    \item Does the improvement manifest in sample efficiency, final performance, or both?
+    \item Does correct handling improve value function learning (as measured by explained variance)?
+\end{enumerate}
+
+\section{Conclusion}
+
+The distinction between truncation and termination in reinforcement learning has been recognized since 2018, with a clear solution (partial-episode bootstrapping) proposed by \citet{pardo2018time}. The Gymnasium library now provides the API infrastructure for correct implementation. However, many popular codebases, including CleanRL's standard PPO, still use the traditional approach that conflates these two concepts.
+
+Our planned experiments will provide an updated empirical comparison of standard PPO versus PPO with correct truncation handling across multiple Gymnasium environments, contributing to the understanding of when this implementation detail matters in practice.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}
