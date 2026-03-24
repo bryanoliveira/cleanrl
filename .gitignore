@@ -1,3 +1,57 @@
+# LaTeX artifacts
+*.aux
+*.bbl
+*.blg
+*.brf
+*.fls
+*.fdb_latexmk
+*.log
+*.nav
+*.out
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+*.xac
+*.xdv
+*.pdfsync
+*.lof
+*.lot
+*.acn
+*.acr
+*.alg
+*.glg
+*.glo
+*.gls
+*.ist
+*.xdy
+*.run.xml
+*.bcf
+
+# PDF output and intermediate files
+*.pdf
+
+# latexmk auxiliary dir
+latex.out/
+
+# Generated bibliography files
+*.blg
+*.bbl
+
+# Other possible LaTeX-related junk
+*.ps
+*.dvi
+*.svg
+*.asy
+
+# TeXShop and Windows junk
+*.synctex.gz
+*.synctex.gz(busy)
+*.fdb_latexmk
+*.fls
+*.dvi
+*~
+
 slurm
 .aim
 runs
